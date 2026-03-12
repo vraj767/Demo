@@ -1,0 +1,6 @@
+python-telegram-bot==21.10
+fastapi==0.115.6
+uvicorn==0.32.1
+requests==2.32.3
+telethon==1.38.1
+httpx
