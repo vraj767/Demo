@@ -23,7 +23,7 @@ FORCE_HTTPS = os.getenv("FORCE_HTTPS", "true").lower() in {"1", "true", "yes", "
 # ── Admin auth ───────────────────────────────────────────────────────────────
 ADMIN_TOKEN    = os.getenv("ADMIN_TOKEN", "")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "Admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Admin")
 
 # ── File storage ─────────────────────────────────────────────────────────────
 DEFAULT_TTL_SECONDS      = int(os.getenv("DEFAULT_TTL_SECONDS",      "21600"))  # 6 h
