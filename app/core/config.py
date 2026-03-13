@@ -8,16 +8,16 @@ import os
 import time
 
 # ── Telegram ────────────────────────────────────────────────────────────────
-BOT_TOKEN        = os.getenv("BOT_TOKEN", "").strip()
+BOT_TOKEN        = os.getenv("BOT_TOKEN", "8342249111:AAFO0jdOKvupldf-bHThvE2RWuJUXBevjgg").strip()
 BOT_ENABLED      = os.getenv("BOT_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
-API_ID           = os.getenv("API_ID", "").strip()
-API_HASH         = os.getenv("API_HASH", "").strip()
+API_ID           = os.getenv("API_ID", "31855573").strip()
+API_HASH         = os.getenv("API_HASH", "0716aeef77195fc167d2b7c19aeb5096").strip()
 TELETHON_SESSION = os.getenv("TELETHON_SESSION", "").strip()
-REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "").strip().lstrip("@")
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "file_to_link_bot_fast_download").strip().lstrip("@")
 
 # ── HTTP server ─────────────────────────────────────────────────────────────
 PORT      = int(os.getenv("PORT", "8080"))
-BASE_URL  = os.getenv("BASE_URL", "").rstrip("/")
+BASE_URL  = os.getenv("BASE_URL", "demo-production-ff8c.up.railway.app").rstrip("/")
 FORCE_HTTPS = os.getenv("FORCE_HTTPS", "true").lower() in {"1", "true", "yes", "on"}
 
 # ── Admin auth ───────────────────────────────────────────────────────────────
