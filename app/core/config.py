@@ -17,7 +17,7 @@ REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "https://t.me/file_to_link_bot_
 
 # ── HTTP server ─────────────────────────────────────────────────────────────
 PORT      = int(os.getenv("PORT", "8080"))
-BASE_URL  = os.getenv("BASE_URL", "https://demo-production-7d87.up.railway.app").rstrip("/")
+BASE_URL  = os.getenv("BASE_URL", "https://file-to-link-production-3e6a.up.railway.app").rstrip("/")
 FORCE_HTTPS = os.getenv("FORCE_HTTPS", "true").lower() in {"1", "true", "yes", "on"}
 
 # ── Admin auth ───────────────────────────────────────────────────────────────
