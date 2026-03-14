@@ -6,7 +6,8 @@ Telegram bot polling thread lifecycle:
   - run_bot()            — runs python-telegram-bot on its own event loop thread
 
 CHANGES:
-  - Registered /help command handler.
+  - Registered /stats  command (admin only)
+  - Registered /broadcast command (admin only)
 """
 import asyncio
 import logging
@@ -18,7 +19,14 @@ import requests
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from app.core.config import BOT_TOKEN
-from app.bot.handlers import error_handler, file_handler, help_command, start_command
+from app.bot.handlers import (
+    broadcast_command,
+    error_handler,
+    file_handler,
+    help_command,
+    start_command,
+    stats_command,
+)
 
 logger  = logging.getLogger(__name__)
 _bot_app: Optional[Application] = None
@@ -30,7 +38,7 @@ def _kick_old_session() -> None:
 
     Root cause of 409 Conflict:
       Railway hard-kills the old container before its 30s getUpdates call
-      returns, leaving Telegram's slot occupied.  The new instance immediately
+      returns, leaving Telegram's slot occupied. The new instance immediately
       hits 409.
 
     Fix: POST getUpdates(timeout=0, offset=-1) right at startup.
@@ -67,8 +75,16 @@ def run_bot(stop_event: Event) -> None:
         .connect_timeout(15)
         .build()
     )
+
+    # ── Public commands ───────────────────────────────────────────────────────
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help",  help_command))    # ← NEW
+    app.add_handler(CommandHandler("help",  help_command))
+
+    # ── Admin-only commands ───────────────────────────────────────────────────
+    app.add_handler(CommandHandler("stats",     stats_command))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
+
+    # ── File handler ──────────────────────────────────────────────────────────
     app.add_handler(MessageHandler(
         filters.Document.ALL | filters.VIDEO | filters.AUDIO,
         file_handler,
