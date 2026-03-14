@@ -47,7 +47,7 @@ async def lifespan(_app: FastAPI):
     #    (sync ensure_running() would block uvicorn for up to 30s)
     if has_mtproto_support():
         try:
-            await mtproto.async_ensure_running()
+            asyncio.create_task(_prewarm_mtproto())
             logger.info("MTProto client pre-warmed ✓")
         except Exception as exc:
             logger.warning("MTProto pre-warm failed (will retry on first request): %s", exc)
