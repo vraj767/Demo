@@ -273,12 +273,26 @@ def render_file_page(file_hash: str, info: dict) -> str:
         e.preventDefault();
         const intentUrl=el.href;
         const fallback='{download_url}';
-        window.location.href=intentUrl;
-        // If 1DM opens, page becomes hidden and timeout does nothing.
-        // If 1DM is NOT installed, page stays visible → fall back to direct download.
-        setTimeout(function(){{
-            if(!document.hidden){{window.location.href=fallback;}}
-        }},1500);
+
+        // Track whether the user left the page (1DM opened) using pagehide/blur.
+        // document.hidden is NOT reliable in Chrome Android for intent:// URLs —
+        // it stays false even when 1DM has opened, so using it causes the browser
+        // fallback to always fire. pagehide and blur ARE fired when Android
+        // switches to another app (1DM), so we use those instead.
+        let appOpened = false;
+        function markOpened() {{ appOpened = true; }}
+        window.addEventListener('pagehide', markOpened, {{ once: true }});
+        window.addEventListener('blur',     markOpened, {{ once: true }});
+
+        window.location.href = intentUrl;
+
+        // Wait 2500ms — enough time for 1DM to intercept on slow phones.
+        // Only fall back to browser download if 1DM never opened.
+        setTimeout(function() {{
+            window.removeEventListener('pagehide', markOpened);
+            window.removeEventListener('blur',     markOpened);
+            if (!appOpened) {{ window.location.href = fallback; }}
+        }}, 2500);
     }}
     function handleVlc(e){{if(!isMobile){{e.preventDefault();document.getElementById('vlc-modal').classList.add('open');}}return isMobile;}}
     function closeModal(){{document.getElementById('vlc-modal').classList.remove('open');}}
