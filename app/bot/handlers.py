@@ -184,7 +184,7 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("▶️ Stream",   url=file_url),
-            InlineKeyboardButton("⬇️ Download", url=download_url),
+            InlineKeyboardButton("⬇️ Download", url=file_url),
         ]]),
     )
 
