@@ -3,17 +3,37 @@ app/bot/handlers.py
 ────────────────────
 All Telegram bot handlers:
   - /start with force-join check
-  - /help command (NEW)
+  - /help
+  - /stats  (admin only) — shows total users, files, downloads, streams, uptime
+  - /broadcast <message>  (admin only) — sends a message to all known users
   - file_handler for document / video / audio
   - error_handler
+
+ADMIN COMMANDS:
+  Both /stats and /broadcast are protected by ADMIN_USER_ID from config.py.
+  Only the Telegram account whose user ID matches ADMIN_USER_ID can use them.
+  Everyone else gets silently ignored (no error message shown to attackers).
+
+  To set up: add ADMIN_USER_ID = <your_telegram_id> in Railway Variables.
+  Get your ID by messaging @userinfobot on Telegram.
 """
+import asyncio
 import logging
+import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app.core.config import DEFAULT_TTL_SECONDS, REQUIRED_CHANNEL
-from app.core.storage import register_file
+from app.core.config import ADMIN_USER_ID, DEFAULT_TTL_SECONDS, REQUIRED_CHANNEL, START_TIME
+from app.core.storage import (
+    get_all_user_ids,
+    get_user_count,
+    global_stats,
+    register_file,
+    register_user,
+    file_storage,
+    is_expired,
+)
 from app.core.urls import effective_base_url
 
 logger = logging.getLogger(__name__)
@@ -21,11 +41,21 @@ logger = logging.getLogger(__name__)
 _VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".m2ts"}
 
 
+# ── Admin guard ───────────────────────────────────────────────────────────────
+def _is_admin(user_id: int) -> bool:
+    """
+    Returns True only if ADMIN_USER_ID is configured AND matches this user.
+    If ADMIN_USER_ID is 0 (not set), admin commands are disabled for everyone.
+    """
+    return ADMIN_USER_ID != 0 and user_id == ADMIN_USER_ID
+
+
+# ── Channel membership check ──────────────────────────────────────────────────
 async def _is_member(bot, user_id: int, channel: str) -> bool:
     """
     Returns True if user is a member of the channel.
     Fails open (returns True) on any API error so users are never permanently
-    locked out by a misconfiguration.  Bot must be an ADMIN of the channel.
+    locked out by a misconfiguration. Bot must be an ADMIN of the channel.
     """
     try:
         member = await bot.get_chat_member(chat_id=f"@{channel}", user_id=user_id)
@@ -41,6 +71,7 @@ async def _is_member(bot, user_id: int, channel: str) -> bool:
         return True   # fail-open: never lock users out due to misconfiguration
 
 
+# ── /start ────────────────────────────────────────────────────────────────────
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user  = update.effective_user
     first = user.first_name if user else "there"
@@ -74,6 +105,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+# ── /help ─────────────────────────────────────────────────────────────────────
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a detailed help message explaining all bot features."""
     ttl_hours = DEFAULT_TTL_SECONDS // 3600
@@ -120,6 +152,130 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
+# ── /stats (admin only) ───────────────────────────────────────────────────────
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Show bot statistics. Only works for the ADMIN_USER_ID account.
+
+    Displays:
+      - Total unique users
+      - Active links right now
+      - Total files uploaded, downloads, streams (since last deploy)
+      - Bot uptime
+    """
+    user = update.effective_user
+    if not _is_admin(user.id):
+        # Silently ignore — don't reveal that this command exists to strangers
+        return
+
+    # Calculate uptime
+    uptime_secs  = int(time.time() - START_TIME)
+    uptime_hours = uptime_secs // 3600
+    uptime_mins  = (uptime_secs % 3600) // 60
+    uptime_secs  = uptime_secs % 60
+    if uptime_hours > 0:
+        uptime_str = f"{uptime_hours}h {uptime_mins}m {uptime_secs}s"
+    else:
+        uptime_str = f"{uptime_mins}m {uptime_secs}s"
+
+    # Count active (non-expired) links
+    active_links = sum(1 for v in file_storage.values() if not is_expired(v))
+
+    # Snapshot of global stats (thread-safe read)
+    total_users     = get_user_count()
+    total_uploaded  = global_stats.get("total_files_uploaded", 0)
+    total_downloads = global_stats.get("total_downloads", 0)
+    total_streams   = global_stats.get("total_streams", 0)
+
+    await update.message.reply_text(
+        "📊 *Bot Statistics*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👥 *Total Users:* `{total_users}`\n"
+        f"🔗 *Active Links:* `{active_links}`\n\n"
+        f"📁 *Files Uploaded:* `{total_uploaded}`\n"
+        f"⬇️ *Total Downloads:* `{total_downloads}`\n"
+        f"▶️ *Total Streams:* `{total_streams}`\n\n"
+        f"⏱️ *Uptime:* `{uptime_str}`\n\n"
+        "_Stats reset on each redeploy._",
+        parse_mode="Markdown",
+    )
+
+
+# ── /broadcast (admin only) ───────────────────────────────────────────────────
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Send a message to all users who have ever used the bot.
+    Only works for the ADMIN_USER_ID account.
+
+    Usage:
+      /broadcast Hello everyone! New feature added 🎉
+
+    The bot sends the message to every known user ID, then replies with
+    a summary showing how many succeeded and how many failed (blocked/left).
+    """
+    user = update.effective_user
+    if not _is_admin(user.id):
+        return
+
+    # Get the message text (everything after /broadcast)
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ *Usage:* `/broadcast your message here`\n\n"
+            "_Example:_ `/broadcast Hey everyone! New feature added 🎉`",
+            parse_mode="Markdown",
+        )
+        return
+
+    message_text = " ".join(context.args)
+    user_ids     = get_all_user_ids()
+    total        = len(user_ids)
+
+    if total == 0:
+        await update.message.reply_text(
+            "⚠️ No users found. Users are tracked after they send their first file."
+        )
+        return
+
+    # Send progress message first
+    progress_msg = await update.message.reply_text(
+        f"📢 *Broadcasting to {total} users...*",
+        parse_mode="Markdown",
+    )
+
+    sent    = 0
+    failed  = 0
+    blocked = 0
+
+    for uid in user_ids:
+        try:
+            await context.bot.send_message(
+                chat_id    = uid,
+                text       = f"📢 *Message from Admin:*\n\n{message_text}",
+                parse_mode = "Markdown",
+            )
+            sent += 1
+        except Exception as exc:
+            err = str(exc).lower()
+            if "blocked" in err or "forbidden" in err or "deactivated" in err:
+                blocked += 1
+            else:
+                failed += 1
+            logger.warning("Broadcast failed for user %s: %s", uid, exc)
+
+        # Small delay to avoid hitting Telegram rate limits (30 messages/sec max)
+        await asyncio.sleep(0.05)
+
+    # Edit the progress message with the final summary
+    await progress_msg.edit_text(
+        f"✅ *Broadcast Complete*\n\n"
+        f"📤 *Sent:* `{sent}` / `{total}`\n"
+        f"🚫 *Blocked/Left:* `{blocked}`\n"
+        f"❌ *Failed:* `{failed}`",
+        parse_mode="Markdown",
+    )
+
+
+# ── file_handler ──────────────────────────────────────────────────────────────
 async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
     user    = update.effective_user
@@ -154,6 +310,10 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not tg_file:
         return
 
+    # Track this user for broadcast and stats
+    if user:
+        register_user(user.id, user.first_name or "")
+
     file_hash = register_file(
         file_id    = tg_file.file_id,
         file_name  = file_name,
@@ -163,11 +323,10 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         message_id = message.message_id,
     )
 
-    base         = effective_base_url()
-    file_url     = f"{base}/file/{file_hash}"
-    download_url = f"{base}/download/{file_hash}"
-    file_size    = tg_file.file_size or 0
-    size_text    = (
+    base      = effective_base_url()
+    file_url  = f"{base}/file/{file_hash}"
+    file_size = tg_file.file_size or 0
+    size_text = (
         f"{file_size / (1024**3):.2f} GB"
         if file_size >= 1024 ** 3
         else f"{file_size / (1024**2):.2f} MB"
@@ -189,5 +348,6 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
+# ── error_handler ─────────────────────────────────────────────────────────────
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Telegram error:", exc_info=context.error)
