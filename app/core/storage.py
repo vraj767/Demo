@@ -3,12 +3,19 @@ app/core/storage.py
 ────────────────────
 In-memory file registry, global stats, rate limiting, and cleanup loop.
 All state lives here — import from here, never duplicate dicts elsewhere.
+
+CHANGES:
+  - Added user_storage: tracks every user who has ever used the bot.
+    Required for /broadcast (send message to all users) and
+    /stats (total user count).
+  - Added register_user() — called from file_handler on every file upload.
+  - Added get_all_user_ids() — returns list of all known user IDs.
 """
 import hashlib
 import logging
 import time
 from threading import Lock, Thread
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from fastapi import HTTPException
 
@@ -19,9 +26,13 @@ from app.core.config import (
 
 logger = logging.getLogger(__name__)
 
-# ── Storage ──────────────────────────────────────────────────────────────────
+# ── Storage ───────────────────────────────────────────────────────────────────
 file_storage:       Dict[str, dict]                    = {}
 rate_limit_storage: Dict[str, Dict[str, List[float]]] = {}
+
+# Tracks every user who has sent a file to the bot.
+# Key: user_id (int), Value: dict with first_name and last_seen timestamp.
+user_storage: Dict[int, dict] = {}
 
 global_stats: Dict[str, int] = {
     "total_files_uploaded": 0,
@@ -33,7 +44,33 @@ _storage_lock    = Lock()
 _cleanup_started = False
 
 
-# ── File helpers ─────────────────────────────────────────────────────────────
+# ── User helpers ──────────────────────────────────────────────────────────────
+def register_user(user_id: int, first_name: str) -> None:
+    """
+    Record that this user has used the bot.
+    Called every time a user successfully uploads a file.
+    Thread-safe — uses the same _storage_lock as file operations.
+    """
+    with _storage_lock:
+        user_storage[user_id] = {
+            "first_name": first_name,
+            "last_seen":  int(time.time()),
+        }
+
+
+def get_all_user_ids() -> List[int]:
+    """Return a snapshot list of all known user IDs. Thread-safe."""
+    with _storage_lock:
+        return list(user_storage.keys())
+
+
+def get_user_count() -> int:
+    """Return total number of unique users. Thread-safe."""
+    with _storage_lock:
+        return len(user_storage)
+
+
+# ── File helpers ──────────────────────────────────────────────────────────────
 def now_ts() -> int:
     return int(time.time())
 
@@ -89,7 +126,7 @@ def increment_stat(file_hash: str, field: str, global_key: str) -> None:
         global_stats[global_key] += 1
 
 
-# ── Cleanup worker ────────────────────────────────────────────────────────────
+# ── Cleanup worker ─────────────────────────────────────────────────────────────
 def _cleanup_loop() -> None:
     while True:
         try:
@@ -113,7 +150,7 @@ def start_cleanup_worker() -> None:
     Thread(target=_cleanup_loop, daemon=True, name="cleanup").start()
 
 
-# ── Rate limiter ──────────────────────────────────────────────────────────────
+# ── Rate limiter ───────────────────────────────────────────────────────────────
 def check_rate_limit(ip: str, action: str, limit: int, window: int = 60) -> None:
     now = time.time()
     with _storage_lock:
