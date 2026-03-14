@@ -3,6 +3,14 @@ main.py
 ────────
 FastAPI application factory.
 Wires together: lifespan, middleware, all route handlers.
+
+CHANGES:
+  - Added _setup_bot_commands() — automatically sets two command menus
+    on every deploy:
+      1. Regular users see: /start, /help
+      2. Admin (ADMIN_USER_ID) sees: /start, /help, /stats, /broadcast
+    This means when admin types / in the bot chat, all 4 commands appear.
+    Regular users only see the 2 public commands.
 """
 import asyncio
 import logging
@@ -13,7 +21,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.core.config import FORCE_HTTPS, PORT
+from app.core.config import ADMIN_USER_ID, BOT_TOKEN, FORCE_HTTPS, PORT
 from app.core.mtproto import has_mtproto_support, mtproto
 from app.core.storage import start_cleanup_worker
 from app.core.urls import update_detected_base_url
@@ -31,7 +39,81 @@ from app.api.routes.handlers import (
 logger = logging.getLogger(__name__)
 
 
-# ── Lifespan ──────────────────────────────────────────────────────────────────
+# ── Bot command menu setup ─────────────────────────────────────────────────────
+async def _setup_bot_commands() -> None:
+    """
+    Set the bot command menu via the Telegram Bot API.
+
+    Regular users see:
+      /start   - Welcome message
+      /help    - How to use the bot
+
+    Admin (ADMIN_USER_ID) sees all of the above PLUS:
+      /stats     - View bot statistics
+      /broadcast - Send message to all users
+
+    This runs once at startup. If it fails (e.g. BOT_TOKEN not set yet),
+    it logs a warning and continues — it's non-critical.
+    """
+    if not BOT_TOKEN:
+        return
+
+    import requests as _req
+
+    base = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+    # ── 1. Public commands (visible to everyone) ──────────────────────────────
+    public_commands = [
+        {"command": "start", "description": "Welcome message"},
+        {"command": "help",  "description": "How to use the bot"},
+    ]
+    try:
+        _req.post(
+            f"{base}/setMyCommands",
+            json={"commands": public_commands, "scope": {"type": "default"}},
+            timeout=10,
+        )
+        logger.info("Bot public commands set ✓")
+    except Exception as exc:
+        logger.warning("Could not set public bot commands: %s", exc)
+
+    # ── 2. Admin commands (visible only to ADMIN_USER_ID in private chat) ─────
+    if ADMIN_USER_ID:
+        admin_commands = [
+            {"command": "start",     "description": "Welcome message"},
+            {"command": "help",      "description": "How to use the bot"},
+            {"command": "stats",     "description": "📊 View bot statistics"},
+            {"command": "broadcast", "description": "📢 Send message to all users"},
+        ]
+        try:
+            _req.post(
+                f"{base}/setMyCommands",
+                json={
+                    "commands": admin_commands,
+                    "scope": {
+                        "type":    "chat",
+                        "chat_id": ADMIN_USER_ID,
+                    },
+                },
+                timeout=10,
+            )
+            logger.info("Bot admin commands set for user %s ✓", ADMIN_USER_ID)
+        except Exception as exc:
+            logger.warning("Could not set admin bot commands: %s", exc)
+
+
+# ── MTProto background pre-warm ────────────────────────────────────────────────
+async def _prewarm_mtproto() -> None:
+    if not has_mtproto_support():
+        return
+    try:
+        await mtproto.async_ensure_running()
+        logger.info("MTProto client pre-warmed ✓")
+    except Exception as exc:
+        logger.warning("MTProto pre-warm failed (will retry on first request): %s", exc)
+
+
+# ── Lifespan ───────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # 1. Start file-expiry cleanup worker
@@ -43,18 +125,17 @@ async def lifespan(_app: FastAPI):
     bot_thread.start()
     logger.info("Telegram bot thread started")
 
-    # 3. Pre-warm MTProto — prevents first download from stalling
-    #    (sync ensure_running() would block uvicorn for up to 30s)
-    if has_mtproto_support():
-        try:
-            await mtproto.async_ensure_running()
-            logger.info("MTProto client pre-warmed ✓")
-        except Exception as exc:
-            logger.warning("MTProto pre-warm failed (will retry on first request): %s", exc)
+    # 3. Set bot command menus (public + admin)
+    await _setup_bot_commands()
 
+    # 4. Pre-warm MTProto in background — must NOT block before yield
+    #    otherwise /healthz is blocked until MTProto connects
+    asyncio.create_task(_prewarm_mtproto())
+
+    # Yield immediately → uvicorn starts serving → /healthz returns 200 instantly
     yield
 
-    # ── Graceful shutdown ─────────────────────────────────────────────────────
+    # ── Graceful shutdown ──────────────────────────────────────────────────────
     logger.info("Shutting down Telegram bot …")
     stop_ev.set()
     bot_app = get_bot_app()
@@ -71,7 +152,7 @@ async def lifespan(_app: FastAPI):
     logger.info("Bot thread joined — shutdown complete")
 
 
-# ── App ───────────────────────────────────────────────────────────────────────
+# ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="File-to-Link Bot", lifespan=lifespan)
 
 
@@ -96,7 +177,7 @@ async def force_https_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# ── Routes ─────────────────────────────────────────────────────────────────────
 app.get("/healthz")(healthz)
 app.get("/",                          response_class=HTMLResponse)(index)
 app.get("/admin",                     response_class=HTMLResponse)(admin_dashboard)
@@ -106,7 +187,7 @@ app.get("/download/{file_hash}")(download_file)
 app.get("/media/{file_hash}")(media_file)
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Entry point ────────────────────────────────────────────────────────────────
 def main() -> None:
     import uvicorn
     logging.basicConfig(
