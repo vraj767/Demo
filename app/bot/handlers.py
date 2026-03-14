@@ -3,6 +3,7 @@ app/bot/handlers.py
 ────────────────────
 All Telegram bot handlers:
   - /start with force-join check
+  - /help command (NEW)
   - file_handler for document / video / audio
   - error_handler
 """
@@ -67,7 +68,54 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "• ▶️ Stream directly in browser\n"
         "• ⬇️ Fast direct download\n"
         "• ⏳ Link valid for 6 hours\n\n"
-        "📁 Just forward or send any file to get started!",
+        "📁 Just forward or send any file to get started!\n\n"
+        "💡 Type /help for detailed instructions.",
+        parse_mode="Markdown",
+    )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a detailed help message explaining all bot features."""
+    ttl_hours = DEFAULT_TTL_SECONDS // 3600
+    await update.message.reply_text(
+        "📖 *File To Link Bot — Help Guide*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+        "🤖 *What does this bot do?*\n"
+        "Send any file and instantly get a shareable link for streaming "
+        "or downloading — no login required, works in any browser.\n\n"
+
+        "📂 *Supported file types:*\n"
+        "• 🎬 *Video:* MP4, MKV, AVI, MOV, WEBM, FLV, WMV, M4V, TS\n"
+        "• 🎵 *Audio:* MP3, AAC, FLAC, WAV, OGG\n"
+        "• 📄 *Documents:* PDF, ZIP, and any other file type\n\n"
+
+        f"⏳ *Link expiry:*\n"
+        f"All links expire after *{ttl_hours} hours*. "
+        "Simply resend the same file to get a fresh link at any time.\n\n"
+
+        "▶️ *Best way to stream — VLC Player:*\n"
+        "1. Open VLC → Media → Open Network Stream\n"
+        "2. Paste the link → Press Play\n"
+        "✅ Best for HEVC/x265 and AV1 files with full audio support\n\n"
+
+        "⚡ *Fastest download — 1DM (Android):*\n"
+        "1. Install *1DM* from the Play Store\n"
+        "2. Open the link on your phone\n"
+        "3. Tap the *1DM Download* button on the page\n"
+        "✅ Multi-threaded, up to 5× faster than the browser\n\n"
+
+        "🔄 *Need a fresh link?*\n"
+        "Just forward or resend the same file — a new link is generated instantly.\n\n"
+
+        "💬 *Commands:*\n"
+        "• /start — Welcome message\n"
+        "• /help — This help guide\n\n"
+
+        "❓ *Common issues:*\n"
+        "• *No sound in browser?* → Use VLC instead\n"
+        "• *Link expired?* → Resend the file for a new one\n"
+        "• *Slow download?* → Use the 1DM button on Android",
         parse_mode="Markdown",
     )
 
@@ -115,10 +163,11 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         message_id = message.message_id,
     )
 
-    base      = effective_base_url()
-    file_url  = f"{base}/file/{file_hash}"
-    file_size = tg_file.file_size or 0
-    size_text = (
+    base         = effective_base_url()
+    file_url     = f"{base}/file/{file_hash}"
+    download_url = f"{base}/download/{file_hash}"
+    file_size    = tg_file.file_size or 0
+    size_text    = (
         f"{file_size / (1024**3):.2f} GB"
         if file_size >= 1024 ** 3
         else f"{file_size / (1024**2):.2f} MB"
@@ -135,7 +184,7 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("▶️ Stream",   url=file_url),
-            InlineKeyboardButton("⬇️ Download", url=file_url),
+            InlineKeyboardButton("⬇️ Download", url=download_url),
         ]]),
     )
 
