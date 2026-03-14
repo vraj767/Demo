@@ -4,6 +4,9 @@ app/bot/runner.py
 Telegram bot polling thread lifecycle:
   - _kick_old_session()  — evicts stale getUpdates slot (prevents 409 Conflict)
   - run_bot()            — runs python-telegram-bot on its own event loop thread
+
+CHANGES:
+  - Registered /help command handler.
 """
 import asyncio
 import logging
@@ -15,7 +18,7 @@ import requests
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from app.core.config import BOT_TOKEN
-from app.bot.handlers import error_handler, file_handler, start_command
+from app.bot.handlers import error_handler, file_handler, help_command, start_command
 
 logger  = logging.getLogger(__name__)
 _bot_app: Optional[Application] = None
@@ -65,6 +68,7 @@ def run_bot(stop_event: Event) -> None:
         .build()
     )
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help",  help_command))    # ← NEW
     app.add_handler(MessageHandler(
         filters.Document.ALL | filters.VIDEO | filters.AUDIO,
         file_handler,
