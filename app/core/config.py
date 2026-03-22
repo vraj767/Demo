@@ -29,7 +29,7 @@ ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "0"))
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 PORT        = int(os.getenv("PORT", "8080"))
-BASE_URL    = os.getenv("BASE_URL", "https://demo-production-1298.up.railway.app").rstrip("/")
+BASE_URL    = os.getenv("BASE_URL", "https://demo-production-7d87.up.railway.app").rstrip("/")
 FORCE_HTTPS = os.getenv("FORCE_HTTPS", "true").lower() in {"1", "true", "yes", "on"}
 
 # ── Admin auth ────────────────────────────────────────────────────────────────
