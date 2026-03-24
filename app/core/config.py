@@ -5,10 +5,11 @@ Single source of truth for every env-var / constant.
 Import from here everywhere — never use os.getenv() elsewhere.
 
 CHANGES:
-  - Added ADMIN_USER_ID: your personal Telegram user ID.
-    Only this user can run /stats and /broadcast.
-    Get your ID by messaging @userinfobot on Telegram.
-    Set it as a Railway env var: ADMIN_USER_ID = 834866594
+  - Added SHRINKME_API_KEY: your shrinkme.io API token.
+    When set, every file link sent by the bot is shortened through
+    shrinkme.io so you earn money from the ad page users see.
+    If not set (empty string), links are sent as-is — no ads, no earnings.
+    Get your token: shrinkme.io → Login → Tools → API
 """
 import os
 import time
@@ -21,15 +22,15 @@ API_HASH         = os.getenv("API_HASH", "0716aeef77195fc167d2b7c19aeb5096").str
 TELETHON_SESSION = os.getenv("TELETHON_SESSION", "").strip()
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "https://t.me/file_to_link_bot_fast_download").strip().lstrip("@")
 
-# Your personal Telegram user ID — only this account can use /stats and /broadcast.
-# Find your ID: message @userinfobot on Telegram.
-# Set in Railway Variables as: ADMIN_USER_ID = 123456789
-# If not set, admin commands are disabled for everyone (safe default).
-ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "0"))
+# ── URL Shortener (shrinkme.io) ───────────────────────────────────────────────
+# Set this in Railway Variables: SHRINKME_API_KEY = your_token_here
+# Get your token: https://shrinkme.io → Login → Tools → API
+# Leave empty ("") to disable — links will be sent as plain URLs.
+SHRINKME_API_KEY = os.getenv("SHRINKME_API_KEY", "").strip()
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 PORT        = int(os.getenv("PORT", "8080"))
-BASE_URL    = os.getenv("BASE_URL", "https://demo-production-7d87.up.railway.app").rstrip("/")
+BASE_URL    = os.getenv("BASE_URL", "https://demo-production-1298.up.railway.app").rstrip("/")
 FORCE_HTTPS = os.getenv("FORCE_HTTPS", "true").lower() in {"1", "true", "yes", "on"}
 
 # ── Admin auth ────────────────────────────────────────────────────────────────
@@ -42,8 +43,6 @@ DEFAULT_TTL_SECONDS      = int(os.getenv("DEFAULT_TTL_SECONDS",      "21600"))  
 CLEANUP_INTERVAL_SECONDS = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "300"))    # 5 min
 
 # ── Download engine ───────────────────────────────────────────────────────────
-# 8 MB request_size → Telethon issues 16 parallel 512 KB sub-requests.
-# asyncio.Queue bridge (no run_in_executor overhead) keeps Chrome at 3-5 MB/s.
 TELETHON_REQUEST_SIZE    = int(os.getenv("TELETHON_REQUEST_SIZE", str(8 * 1024 * 1024)))
 STREAM_CHUNK_SIZE        = int(os.getenv("STREAM_CHUNK_SIZE",     str(8 * 1024 * 1024)))
 MTPROTO_QUEUE_CHUNKS     = int(os.getenv("MTPROTO_QUEUE_CHUNKS",  "8"))
