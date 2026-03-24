@@ -26,7 +26,7 @@ REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "https://t.me/file_to_link_bot_
 # Set this in Railway Variables: SHRINKME_API_KEY = your_token_here
 # Get your token: https://shrinkme.io → Login → Tools → API
 # Leave empty ("") to disable — links will be sent as plain URLs.
-SHRINKME_API_KEY = os.getenv("SHRINKME_API_KEY", "").strip()
+SHRINKME_API_KEY = os.getenv("SHRINKME_API_KEY", "ec0d07d7b24ca7699a10ca6ce61c68756b646d4a").strip()
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 PORT        = int(os.getenv("PORT", "8080"))
