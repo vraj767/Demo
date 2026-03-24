@@ -4,36 +4,28 @@ app/bot/handlers.py
 All Telegram bot handlers:
   - /start with force-join check
   - /help
-  - /stats  (admin only) — shows total users, files, downloads, streams, uptime
-  - /broadcast <message>  (admin only) — sends a message to all known users
   - file_handler for document / video / audio
   - error_handler
 
-ADMIN COMMANDS:
-  Both /stats and /broadcast are protected by ADMIN_USER_ID from config.py.
-  Only the Telegram account whose user ID matches ADMIN_USER_ID can use them.
-  Everyone else gets silently ignored (no error message shown to attackers).
-
-  To set up: add ADMIN_USER_ID = <your_telegram_id> in Railway Variables.
-  Get your ID by messaging @userinfobot on Telegram.
+CHANGES:
+  - Added shorten_url() — calls shrinkme.io API to shorten a URL.
+    Returns the shortened URL on success, original URL on any failure
+    (network error, bad API key, etc.) so the bot never breaks.
+  - file_handler now shortens file_url through shrinkme.io before
+    sending it to the user, when SHRINKME_API_KEY is configured.
+  - The shortened URL is used for BOTH the message text link AND
+    the inline button so every click earns you money.
 """
-import asyncio
 import logging
-import time
+import urllib.parse
+
+import requests as _requests
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app.core.config import ADMIN_USER_ID, DEFAULT_TTL_SECONDS, REQUIRED_CHANNEL, START_TIME
-from app.core.storage import (
-    get_all_user_ids,
-    get_user_count,
-    global_stats,
-    register_file,
-    register_user,
-    file_storage,
-    is_expired,
-)
+from app.core.config import DEFAULT_TTL_SECONDS, REQUIRED_CHANNEL, SHRINKME_API_KEY
+from app.core.storage import register_file
 from app.core.urls import effective_base_url
 
 logger = logging.getLogger(__name__)
@@ -41,21 +33,49 @@ logger = logging.getLogger(__name__)
 _VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".m2ts"}
 
 
-# ── Admin guard ───────────────────────────────────────────────────────────────
-def _is_admin(user_id: int) -> bool:
+# ── shrinkme.io helper ────────────────────────────────────────────────────────
+def shorten_url(url: str) -> str:
     """
-    Returns True only if ADMIN_USER_ID is configured AND matches this user.
-    If ADMIN_USER_ID is 0 (not set), admin commands are disabled for everyone.
+    Shorten a URL using the shrinkme.io API.
+
+    API endpoint: https://shrinkme.io/api?api=TOKEN&url=ENCODED_URL
+    Response:     {"shortenedUrl": "https://shrinkme.io/xxxxx"}
+
+    Returns the shortened URL on success.
+    Returns the ORIGINAL URL on any failure (wrong key, network error,
+    rate limit, etc.) so the bot always sends a working link.
+
+    This is a synchronous call — it's fast enough (~100-200ms) that
+    running it in the bot handler is fine. Telegram gives handlers
+    30 seconds before timing out, so there's plenty of headroom.
     """
-    return ADMIN_USER_ID != 0 and user_id == ADMIN_USER_ID
+    if not SHRINKME_API_KEY:
+        return url   # shortener not configured — send original link
+
+    try:
+        encoded = urllib.parse.quote(url, safe="")
+        api_url = f"https://shrinkme.io/api?api={SHRINKME_API_KEY}&url={encoded}"
+        resp    = _requests.get(api_url, timeout=8)
+        data    = resp.json()
+        short   = data.get("shortenedUrl", "").strip()
+        if short and short.startswith("http"):
+            logger.info("shrinkme.io shortened %s → %s", url, short)
+            return short
+        # API returned ok but no valid URL — log and fall back
+        logger.warning("shrinkme.io returned unexpected response: %s", data)
+    except Exception as exc:
+        logger.warning("shrinkme.io shortening failed (using original URL): %s", exc)
+
+    return url   # always fall back to original — bot never breaks
 
 
 # ── Channel membership check ──────────────────────────────────────────────────
 async def _is_member(bot, user_id: int, channel: str) -> bool:
     """
     Returns True if user is a member of the channel.
-    Fails open (returns True) on any API error so users are never permanently
-    locked out by a misconfiguration. Bot must be an ADMIN of the channel.
+    Fails open (returns True) on any API error so users are never
+    permanently locked out by a misconfiguration.
+    Bot must be an ADMIN of the channel.
     """
     try:
         member = await bot.get_chat_member(chat_id=f"@{channel}", user_id=user_id)
@@ -68,7 +88,7 @@ async def _is_member(bot, user_id: int, channel: str) -> bool:
             "Fix: add bot as ADMIN of the channel.",
             channel, user_id, exc,
         )
-        return True   # fail-open: never lock users out due to misconfiguration
+        return True
 
 
 # ── /start ────────────────────────────────────────────────────────────────────
@@ -107,7 +127,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 # ── /help ─────────────────────────────────────────────────────────────────────
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a detailed help message explaining all bot features."""
     ttl_hours = DEFAULT_TTL_SECONDS // 3600
     await update.message.reply_text(
         "📖 *File To Link Bot — Help Guide*\n"
@@ -152,129 +171,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
-# ── /stats (admin only) ───────────────────────────────────────────────────────
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Show bot statistics. Only works for the ADMIN_USER_ID account.
-
-    Displays:
-      - Total unique users
-      - Active links right now
-      - Total files uploaded, downloads, streams (since last deploy)
-      - Bot uptime
-    """
-    user = update.effective_user
-    if not _is_admin(user.id):
-        # Silently ignore — don't reveal that this command exists to strangers
-        return
-
-    # Calculate uptime
-    uptime_secs  = int(time.time() - START_TIME)
-    uptime_hours = uptime_secs // 3600
-    uptime_mins  = (uptime_secs % 3600) // 60
-    uptime_secs  = uptime_secs % 60
-    if uptime_hours > 0:
-        uptime_str = f"{uptime_hours}h {uptime_mins}m {uptime_secs}s"
-    else:
-        uptime_str = f"{uptime_mins}m {uptime_secs}s"
-
-    # Count active (non-expired) links
-    active_links = sum(1 for v in file_storage.values() if not is_expired(v))
-
-    # Snapshot of global stats (thread-safe read)
-    total_users     = get_user_count()
-    total_uploaded  = global_stats.get("total_files_uploaded", 0)
-    total_downloads = global_stats.get("total_downloads", 0)
-    total_streams   = global_stats.get("total_streams", 0)
-
-    await update.message.reply_text(
-        "📊 *Bot Statistics*\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👥 *Total Users:* `{total_users}`\n"
-        f"🔗 *Active Links:* `{active_links}`\n\n"
-        f"📁 *Files Uploaded:* `{total_uploaded}`\n"
-        f"⬇️ *Total Downloads:* `{total_downloads}`\n"
-        f"▶️ *Total Streams:* `{total_streams}`\n\n"
-        f"⏱️ *Uptime:* `{uptime_str}`\n\n"
-        "_Stats reset on each redeploy._",
-        parse_mode="Markdown",
-    )
-
-
-# ── /broadcast (admin only) ───────────────────────────────────────────────────
-async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Send a message to all users who have ever used the bot.
-    Only works for the ADMIN_USER_ID account.
-
-    Usage:
-      /broadcast Hello everyone! New feature added 🎉
-
-    The bot sends the message to every known user ID, then replies with
-    a summary showing how many succeeded and how many failed (blocked/left).
-    """
-    user = update.effective_user
-    if not _is_admin(user.id):
-        return
-
-    # Get the message text (everything after /broadcast)
-    if not context.args:
-        await update.message.reply_text(
-            "⚠️ *Usage:* `/broadcast your message here`\n\n"
-            "_Example:_ `/broadcast Hey everyone! New feature added 🎉`",
-            parse_mode="Markdown",
-        )
-        return
-
-    message_text = " ".join(context.args)
-    user_ids     = get_all_user_ids()
-    total        = len(user_ids)
-
-    if total == 0:
-        await update.message.reply_text(
-            "⚠️ No users found. Users are tracked after they send their first file."
-        )
-        return
-
-    # Send progress message first
-    progress_msg = await update.message.reply_text(
-        f"📢 *Broadcasting to {total} users...*",
-        parse_mode="Markdown",
-    )
-
-    sent    = 0
-    failed  = 0
-    blocked = 0
-
-    for uid in user_ids:
-        try:
-            await context.bot.send_message(
-                chat_id    = uid,
-                text       = f"📢 *Message from Admin:*\n\n{message_text}",
-                parse_mode = "Markdown",
-            )
-            sent += 1
-        except Exception as exc:
-            err = str(exc).lower()
-            if "blocked" in err or "forbidden" in err or "deactivated" in err:
-                blocked += 1
-            else:
-                failed += 1
-            logger.warning("Broadcast failed for user %s: %s", uid, exc)
-
-        # Small delay to avoid hitting Telegram rate limits (30 messages/sec max)
-        await asyncio.sleep(0.05)
-
-    # Edit the progress message with the final summary
-    await progress_msg.edit_text(
-        f"✅ *Broadcast Complete*\n\n"
-        f"📤 *Sent:* `{sent}` / `{total}`\n"
-        f"🚫 *Blocked/Left:* `{blocked}`\n"
-        f"❌ *Failed:* `{failed}`",
-        parse_mode="Markdown",
-    )
-
-
 # ── file_handler ──────────────────────────────────────────────────────────────
 async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
@@ -310,10 +206,6 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not tg_file:
         return
 
-    # Track this user for broadcast and stats
-    if user:
-        register_user(user.id, user.first_name or "")
-
     file_hash = register_file(
         file_id    = tg_file.file_id,
         file_name  = file_name,
@@ -323,8 +215,15 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         message_id = message.message_id,
     )
 
-    base      = effective_base_url()
-    file_url  = f"{base}/file/{file_hash}"
+    base     = effective_base_url()
+    # The real file page URL — this is what shrinkme.io will redirect to
+    # after showing the ad. Users land on the full download/stream page.
+    file_url = f"{base}/file/{file_hash}"
+
+    # Shorten through shrinkme.io if API key is configured.
+    # Falls back to the original URL silently if anything goes wrong.
+    short_url = shorten_url(file_url)
+
     file_size = tg_file.file_size or 0
     size_text = (
         f"{file_size / (1024**3):.2f} GB"
@@ -337,13 +236,12 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"💎 *FAST DOWNLOAD LINK GENERATED*\n\n"
         f"🎬 *Title:* `{file_name}`\n"
         f"📦 *Size:* `{size_text}`\n\n"
-        f"🔗 {file_url}\n\n"
+        f"🔗 {short_url}\n\n"
         f"⏳ *Expiry:* Link expires in {ttl_hours} Hours\n"
-        f"💡 *Tip:* Use the buttons below to Stream or Download",
+        f"💡 *Tip:* Tap the button below to open the download page",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("▶️ Stream",   url=file_url),
-            InlineKeyboardButton("⬇️ Download", url=file_url),
+            InlineKeyboardButton("🎬 Open Download Page", url=short_url),
         ]]),
     )
 
