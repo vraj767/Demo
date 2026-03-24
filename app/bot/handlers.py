@@ -3,35 +3,22 @@ app/bot/handlers.py
 ────────────────────
 All Telegram bot handlers:
   - /start with force-join check
-  - /help
+  - /help command (NEW)
   - file_handler for document / video / audio
   - error_handler
-
-CHANGES:
-  - Added shorten_url() — calls shrinkme.io API to shorten a URL.
-    Returns the shortened URL on success, original URL on any failure
-    (network error, bad API key, etc.) so the bot never breaks.
-  - file_handler now shortens file_url through shrinkme.io before
-    sending it to the user, when SHRINKME_API_KEY is configured.
-  - The shortened URL is used for BOTH the message text link AND
-    the inline button so every click earns you money.
 """
 import logging
-import urllib.parse
-
-import requests as _requests
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app.core.config import DEFAULT_TTL_SECONDS, REQUIRED_CHANNEL, SHRINKME_API_KEY
+from app.core.config import DEFAULT_TTL_SECONDS, REQUIRED_CHANNEL
 from app.core.storage import register_file
 from app.core.urls import effective_base_url
 
 logger = logging.getLogger(__name__)
 
 _VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".m4v", ".ts", ".m2ts"}
-
 
 # ── shrinkme.io helper ────────────────────────────────────────────────────────
 def shorten_url(url: str) -> str:
@@ -68,14 +55,11 @@ def shorten_url(url: str) -> str:
 
     return url   # always fall back to original — bot never breaks
 
-
-# ── Channel membership check ──────────────────────────────────────────────────
 async def _is_member(bot, user_id: int, channel: str) -> bool:
     """
     Returns True if user is a member of the channel.
-    Fails open (returns True) on any API error so users are never
-    permanently locked out by a misconfiguration.
-    Bot must be an ADMIN of the channel.
+    Fails open (returns True) on any API error so users are never permanently
+    locked out by a misconfiguration.  Bot must be an ADMIN of the channel.
     """
     try:
         member = await bot.get_chat_member(chat_id=f"@{channel}", user_id=user_id)
@@ -88,10 +72,9 @@ async def _is_member(bot, user_id: int, channel: str) -> bool:
             "Fix: add bot as ADMIN of the channel.",
             channel, user_id, exc,
         )
-        return True
+        return True   # fail-open: never lock users out due to misconfiguration
 
 
-# ── /start ────────────────────────────────────────────────────────────────────
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user  = update.effective_user
     first = user.first_name if user else "there"
@@ -125,8 +108,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-# ── /help ─────────────────────────────────────────────────────────────────────
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a detailed help message explaining all bot features."""
     ttl_hours = DEFAULT_TTL_SECONDS // 3600
     await update.message.reply_text(
         "📖 *File To Link Bot — Help Guide*\n"
@@ -171,7 +154,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
-# ── file_handler ──────────────────────────────────────────────────────────────
 async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
     user    = update.effective_user
@@ -215,17 +197,11 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         message_id = message.message_id,
     )
 
-    base     = effective_base_url()
-    # The real file page URL — this is what shrinkme.io will redirect to
-    # after showing the ad. Users land on the full download/stream page.
-    file_url = f"{base}/file/{file_hash}"
-
-    # Shorten through shrinkme.io if API key is configured.
-    # Falls back to the original URL silently if anything goes wrong.
-    short_url = shorten_url(file_url)
-
-    file_size = tg_file.file_size or 0
-    size_text = (
+    base         = effective_base_url()
+    file_url     = f"{base}/file/{file_hash}"
+    download_url = f"{base}/download/{file_hash}"
+    file_size    = tg_file.file_size or 0
+    size_text    = (
         f"{file_size / (1024**3):.2f} GB"
         if file_size >= 1024 ** 3
         else f"{file_size / (1024**2):.2f} MB"
@@ -236,16 +212,16 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"💎 *FAST DOWNLOAD LINK GENERATED*\n\n"
         f"🎬 *Title:* `{file_name}`\n"
         f"📦 *Size:* `{size_text}`\n\n"
-        f"🔗 {short_url}\n\n"
+        f"🔗 {file_url}\n\n"
         f"⏳ *Expiry:* Link expires in {ttl_hours} Hours\n"
-        f"💡 *Tip:* Tap the button below to open the download page",
+        f"💡 *Tip:* Use the buttons below to Stream or Download",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🎬 Open Download Page", url=short_url),
+            InlineKeyboardButton("▶️ Stream",   url=file_url),
+            InlineKeyboardButton("⬇️ Download", url=file_url),
         ]]),
     )
 
 
-# ── error_handler ─────────────────────────────────────────────────────────────
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Telegram error:", exc_info=context.error)
