@@ -3,13 +3,6 @@ app/core/config.py
 ──────────────────
 Single source of truth for every env-var / constant.
 Import from here everywhere — never use os.getenv() elsewhere.
-
-CHANGES:
-  - Added SHRINKME_API_KEY: your shrinkme.io API token.
-    When set, every file link sent by the bot is shortened through
-    shrinkme.io so you earn money from the ad page users see.
-    If not set (empty string), links are sent as-is — no ads, no earnings.
-    Get your token: shrinkme.io → Login → Tools → API
 """
 import os
 import time
@@ -22,10 +15,16 @@ API_HASH         = os.getenv("API_HASH", "0716aeef77195fc167d2b7c19aeb5096").str
 TELETHON_SESSION = os.getenv("TELETHON_SESSION", "").strip()
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "https://t.me/file_to_link_bot_fast_download").strip().lstrip("@")
 
+# ── Admin ─────────────────────────────────────────────────────────────────────
+# Your personal Telegram user ID — only this account can use /stats and /broadcast.
+# Find your ID: message @userinfobot on Telegram.
+# Set in Railway Variables: ADMIN_USER_ID = 123456789
+ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "0"))
+
 # ── URL Shortener (shrinkme.io) ───────────────────────────────────────────────
-# Set this in Railway Variables: SHRINKME_API_KEY = your_token_here
-# Get your token: https://shrinkme.io → Login → Tools → API
-# Leave empty ("") to disable — links will be sent as plain URLs.
+# Set in Railway Variables: SHRINKME_API_KEY = your_token_here
+# Get token: shrinkme.io → Login → Tools → API
+# Leave empty to disable — links sent as plain URLs.
 SHRINKME_API_KEY = os.getenv("SHRINKME_API_KEY", "ec0d07d7b24ca7699a10ca6ce61c68756b646d4a").strip()
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
@@ -33,7 +32,7 @@ PORT        = int(os.getenv("PORT", "8080"))
 BASE_URL    = os.getenv("BASE_URL", "https://demo-production-1298.up.railway.app").rstrip("/")
 FORCE_HTTPS = os.getenv("FORCE_HTTPS", "true").lower() in {"1", "true", "yes", "on"}
 
-# ── Admin auth ────────────────────────────────────────────────────────────────
+# ── Admin web auth ────────────────────────────────────────────────────────────
 ADMIN_TOKEN    = os.getenv("ADMIN_TOKEN", "")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "Admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Admin")
