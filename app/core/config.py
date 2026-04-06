@@ -25,7 +25,7 @@ ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "0"))
 # Set in Railway Variables: SHRINKME_API_KEY = your_token_here
 # Get token: shrinkme.io → Login → Tools → API
 # Leave empty to disable — links sent as plain URLs.
-SHRINKME_API_KEY = os.getenv("SHRINKME_API_KEY", "ec0d07d7b24ca7699a10ca6ce61c68756b646d4a").strip()
+SHRINKME_API_KEY = os.getenv("SHRINKME_API_KEY", "6c289d1eb8f1f2b2078b7e2c53c5d1d09dbae531").strip()
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 PORT        = int(os.getenv("PORT", "8080"))
