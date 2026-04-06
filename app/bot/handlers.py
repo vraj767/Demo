@@ -48,28 +48,28 @@ def _is_admin(user_id: int) -> bool:
     return ADMIN_USER_ID != 0 and user_id == ADMIN_USER_ID
 
 
-# ── shrinkme.io helper ────────────────────────────────────────────────────────
+# ── nanolinks.in helper ────────────────────────────────────────────────────────
 def shorten_url(url: str) -> str:
     """
-    Shorten via shrinkme.io API. Returns shortened URL on success,
+    Shorten via  API. Returns shortened URL on success,
     original URL on any failure — bot never breaks.
-    API: GET https://shrinkme.io/api?api=TOKEN&url=ENCODED_URL
-    Response: {"shortenedUrl": "https://shrinkme.io/xxxxx"}
+    API: GET https://nanolinks.in/api?api=TOKEN&url=ENCODED_URL
+    Response: {"shortenedUrl": "https://nanolinks.in/xxxxx"}
     """
     if not SHRINKME_API_KEY:
         return url
     try:
         encoded = urllib.parse.quote(url, safe="")
-        api_url = f"https://shrinkme.io/api?api={SHRINKME_API_KEY}&url={encoded}"
+        api_url = f"https://nanolinks.in/api?api={SHRINKME_API_KEY}&url={encoded}"
         resp    = _requests.get(api_url, timeout=8)
         data    = resp.json()
         short   = data.get("shortenedUrl", "").strip()
         if short and short.startswith("http"):
-            logger.info("shrinkme.io: %s → %s", url, short)
+            logger.info("nanolinks.in: %s → %s", url, short)
             return short
-        logger.warning("shrinkme.io unexpected response: %s", data)
+        logger.warning("nanolinks.in unexpected response: %s", data)
     except Exception as exc:
-        logger.warning("shrinkme.io failed, using original URL: %s", exc)
+        logger.warning("nanolinks.in failed, using original URL: %s", exc)
     return url
 
 
@@ -302,7 +302,7 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     base      = effective_base_url()
     file_url  = f"{base}/file/{file_hash}"
-    short_url = shorten_url(file_url)   # shrinkme.io — falls back to original if unavailable
+    short_url = shorten_url(file_url)   # nanolinks.in — falls back to original if unavailable
 
     file_size = tg_file.file_size or 0
     size_text = (
